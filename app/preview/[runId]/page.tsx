@@ -37,6 +37,8 @@ type Iteration = {
   iteration: number;
   wall_ms: number;
   exit_code: number;
+  network_calls?: number;
+  network_bytes?: number;
 };
 
 type Summary = {
@@ -162,6 +164,49 @@ function formatMs(ms: number): string {
   return `${ms.toFixed(0)} ms`;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+/**
+ * Pull the median across iterations for one of the optional integer
+ * metrics. Returns `null` if any iteration has the metric missing
+ * (so the dashboard can render `—` rather than implying a measured
+ * zero).
+ */
+function medianMetric(
+  iters: Iteration[],
+  pick: (it: Iteration) => number | undefined,
+): number | null {
+  const values: number[] = [];
+  for (const it of iters) {
+    const v = pick(it);
+    if (v === undefined) return null;
+    values.push(v);
+  }
+  if (values.length === 0) return null;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const n = sorted.length;
+  return n % 2 === 1
+    ? sorted[(n - 1) / 2]
+    : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+}
+
+/**
+ * Does the group contain any iteration with `network_calls`
+ * populated? Drives whether the dashboard renders the network
+ * columns at all (suppressing them keeps the timing-only datasets
+ * looking unchanged).
+ */
+function groupHasNetworkMetrics(group: ManifestGroup): boolean {
+  return group.results.some((r) =>
+    r.iterations.some((it) => typeof it.network_calls === "number"),
+  );
+}
+
 function speedupVsSlowest(group: ManifestGroup): Map<string, number | null> {
   const slowest = Math.max(...group.results.map((r) => r.summary.median_wall_ms));
   const out = new Map<string, number | null>();
@@ -204,6 +249,22 @@ export default async function PreviewPage({ params }: Props) {
           mvnd and Maven 4 baselines are not yet included. Treat the numbers below as
           a data-pipeline preview, not a substantive performance claim.
         </p>
+        {runId.endsWith("-capture") && (
+          <p className="mt-2 text-muted-foreground">
+            <strong className="text-foreground">This is a capture-pass dataset.</strong>{" "}
+            Each barista iteration ran through a per-iteration mitmproxy
+            reverse-proxy session so the harness could count upstream requests.
+            Wall-clock times under capture are mitmproxy-instrumented and{" "}
+            <strong>not comparable</strong> to a timing-pass dataset; cross-reference{" "}
+            <a
+              className="underline decoration-dotted hover:text-foreground"
+              href="/preview/walkthrough-2026-05-18-postfix"
+            >
+              the timing-pass dataset
+            </a>{" "}
+            for production wall-clock numbers.
+          </p>
+        )}
       </aside>
 
       <header className="flex flex-col gap-3">
@@ -265,6 +326,7 @@ export default async function PreviewPage({ params }: Props) {
 
 function ManifestCard({ group }: { group: ManifestGroup }) {
   const speedups = speedupVsSlowest(group);
+  const showNetwork = groupHasNetworkMetrics(group);
   return (
     <article className="rounded-lg border border-border bg-card p-6 shadow-sm">
       <h2 className="mb-1 font-mono text-lg font-semibold">{group.manifestId}</h2>
@@ -286,7 +348,19 @@ function ManifestCard({ group }: { group: ManifestGroup }) {
               <th className="py-2 pr-4 text-right font-medium">Median</th>
               <th className="py-2 pr-4 text-right font-medium">p95</th>
               <th className="py-2 pr-4 text-right font-medium">Stddev</th>
-              <th className="py-2 text-right font-medium">vs slowest</th>
+              <th
+                className={`py-2 text-right font-medium ${showNetwork ? "pr-4" : ""}`}
+              >
+                vs slowest
+              </th>
+              {showNetwork && (
+                <>
+                  <th className="border-l border-border py-2 pl-4 pr-4 text-right font-medium">
+                    Upstream calls
+                  </th>
+                  <th className="py-2 text-right font-medium">Bytes</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -297,6 +371,8 @@ function ManifestCard({ group }: { group: ManifestGroup }) {
                   Math.max(...[...speedups.values()].filter((v): v is number => v !== null)) -
                     (speedup ?? 0),
                 ) < 1e-9;
+              const calls = medianMetric(r.iterations, (it) => it.network_calls);
+              const bytes = medianMetric(r.iterations, (it) => it.network_bytes);
               return (
                 <tr
                   key={r.baseline_id}
@@ -319,13 +395,25 @@ function ManifestCard({ group }: { group: ManifestGroup }) {
                   <td className="py-3 pr-4 text-right font-mono tabular-nums text-muted-foreground">
                     ± {formatMs(r.summary.stddev_wall_ms)}
                   </td>
-                  <td className={`py-3 text-right font-mono tabular-nums ${
+                  <td className={`py-3 text-right font-mono tabular-nums ${showNetwork ? "pr-4" : ""} ${
                     isFastest ? "font-semibold text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"
                   }`}>
                     {speedup === null || speedup === undefined
                       ? "—"
                       : `${speedup.toFixed(2)}×`}
                   </td>
+                  {showNetwork && (
+                    <>
+                      <td className={`border-l border-border py-3 pl-4 pr-4 text-right font-mono tabular-nums ${
+                        calls === 0 ? "font-semibold text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"
+                      }`}>
+                        {calls === null ? "—" : calls.toFixed(0)}
+                      </td>
+                      <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">
+                        {bytes === null ? "—" : formatBytes(bytes)}
+                      </td>
+                    </>
+                  )}
                 </tr>
               );
             })}
@@ -338,6 +426,18 @@ function ManifestCard({ group }: { group: ManifestGroup }) {
         <code className="rounded bg-muted px-1 py-0.5">
           median_slowest / median_this_baseline
         </code>
+        {showNetwork && (
+          <>
+            {" "}
+            · &quot;Upstream calls&quot; counts distinct HTTP requests to the
+            configured upstream (Maven Central by default) captured via
+            mitmdump · <code className="rounded bg-muted px-1 py-0.5">—</code>
+            {" "}
+            for baselines the harness did not capture (mvn / mvnd / forked-mvn
+            paths bypass the env hook; their captures live in
+            scripts/run-baseline-captures.sh)
+          </>
+        )}
         .
       </p>
     </article>
