@@ -275,10 +275,14 @@ export default async function PreviewPage({ params }: Props) {
             <code>BARISTA_PATHS__M2_REPOSITORY</code>, and{" "}
             <code>MAVEN_OPTS=-Dmaven.repo.local=&hellip;</code>) so every
             iteration genuinely re-fetched the full dependency closure from
-            Maven Central. <code>mvn</code>&apos;s capture wiring is not yet
-            integrated into the harness — the <code>Upstream calls</code>{" "}
-            column reads <code>—</code> for mvn baselines; see the workspace
-            tracker for the follow-up.
+            Maven Central. Both barista (via mitmproxy reverse-proxy) and
+            mvn (via a per-iteration <code>settings.xml</code>{" "}
+            <code>&lt;proxies&gt;</code> block fed via{" "}
+            <code>--settings</code>) are captured. Wall-clock numbers
+            depend on Maven Central&apos;s response time and vary
+            meaningfully across runs; only the{" "}
+            <code>Upstream calls</code> + bytes comparison is robust on
+            the same workload.
           </p>
         )}
       </aside>
