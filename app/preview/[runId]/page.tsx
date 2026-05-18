@@ -265,6 +265,22 @@ export default async function PreviewPage({ params }: Props) {
             for production wall-clock numbers.
           </p>
         )}
+        {runId.endsWith("-cold") && (
+          <p className="mt-2 text-muted-foreground">
+            <strong className="text-foreground">
+              This is a cold-cache dataset.
+            </strong>{" "}
+            Each iteration was routed at a fresh tempdir (
+            <code>BARISTA_PATHS__CACHE_DIR</code>,{" "}
+            <code>BARISTA_PATHS__M2_REPOSITORY</code>, and{" "}
+            <code>MAVEN_OPTS=-Dmaven.repo.local=&hellip;</code>) so every
+            iteration genuinely re-fetched the full dependency closure from
+            Maven Central. <code>mvn</code>&apos;s capture wiring is not yet
+            integrated into the harness — the <code>Upstream calls</code>{" "}
+            column reads <code>—</code> for mvn baselines; see the workspace
+            tracker for the follow-up.
+          </p>
+        )}
       </aside>
 
       <header className="flex flex-col gap-3">
